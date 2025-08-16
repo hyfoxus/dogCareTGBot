@@ -1,0 +1,32 @@
+spring:
+  config:
+    import: "optional:file:./bot-config.yml"   # или file:/etc/bot/bot-config.yml в проде
+  application:
+    name: spring-telegram-bot-webhook-redis
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DB:0}
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+telegram:
+  bot:
+    token: ${TELEGRAM_BOT_TOKEN:}
+    username: ${TELEGRAM_BOT_USERNAME:}
+    allowedUserIds: ${TELEGRAM_ALLOWED_USER_IDS:}
+  flow:
+    dispatcherContact: ${TELEGRAM_DISPATCHER_CONTACT:@dog_dispatcher}
+    jobFormUrl: ${TELEGRAM_JOB_FORM_URL:}
+    adminChatId: ${TELEGRAM_ADMIN_CHAT_ID:}
+  webhook:
+    url: ${TELEGRAM_WEBHOOK_URL:}
+    secretToken: ${TELEGRAM_WEBHOOK_SECRET:supersecret}
+    path: /webhook/telegram

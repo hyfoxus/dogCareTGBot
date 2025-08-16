@@ -1,0 +1,54 @@
+telegram:
+  bot:
+    token: ""
+    username: ""
+    allowedUserIds: []
+
+  webhook:
+    url: "https://<your-ngrok>.ngrok-free.app/webhook/telegram"
+    secretToken: "supersecret"
+    path: /webhook/telegram
+
+flow:
+  dispatcherContact: "@dog_dispatcher"
+  jobFormUrl: "https://form.example.com"
+  adminChatId: 111222333
+
+ui:
+  mainMenu:
+    title: "Выберите раздел:"
+    buttons:
+      services: "Услуги для собак"
+      work: "Работать у нас"
+      callManager: "Позвать менеджера"
+      general: "Общие вопросы"
+
+  servicesMenu:
+    title: "Выберите услугу:"
+    buttons:
+      walk: "Выгул"
+      boarding: "Передержка"
+      nanny: "Няня для собак"
+      back: "⬅️ Назад"
+
+  walkMenu:
+    title: "Какой тип выгула нужен?"
+    buttons:
+      normal: "Обычный"
+      active: "Активный"
+      cancel: "❌ Отменить заявку"
+      back: "⬅️ Назад"
+
+  messages:
+    draftHeader: "Заявка (черновик) ID: `{id}`\nУслуга: {service}{subtypeSuffix}"
+    draftTip: "Опишите собаку и условия:\n• порода, возраст, характер\n• график, район/адрес\n• особые требования"
+    summary: "Спасибо! Заявка создана.\n\nID: `{id}`\nСтатус: {status}\nУслуга: {service}{subtypeSuffix}\n\n*Описание:*\n{description}"
+
+  faq:
+    cost: "Стоимость зависит от услуги и длительности. Напишите диспетчеру — подберём тариф."
+    pay: "Оплата: наличными/карта/перевод. Чек по запросу."
+    keys: "Ключи: личная передача/сейф/консьерж — обсудим удобный вариант."
+    medkit: "Есть базовая аптечка, важные лекарства передайте заранее."
+    washpaws: "После выгула моем лапы. Особые средства — сообщите."
+    feed: "Кормление по вашему режиму. Укажите корм/норму/аллергии."
+    contract: "Работаем по публичной оферте/договору. Можем направить копию."
