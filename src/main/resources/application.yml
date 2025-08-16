@@ -1,4 +1,9 @@
 spring:
+  datasource:
+    url: jdbc:h2:file:./h2/orders;AUTO_SERVER=TRUE;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
   config:
     import: "optional:file:./bot-config.yml"   # или file:/etc/bot/bot-config.yml в проде
   application:
@@ -10,12 +15,23 @@ spring:
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DB:0}
 
-
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc.time_zone: UTC
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
 
 telegram:
   bot:

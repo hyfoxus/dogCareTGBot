@@ -1,5 +1,10 @@
-target/
-.idea/
+target
+.idea
 *.iml
-*.log
-.cache/
+.mvn
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+config/*
+!config/.keep
