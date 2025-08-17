@@ -230,4 +230,32 @@ public class OrderService {
             return null;
         }
     }
+    public Optional<Order> updateStatus(String orderId, OrderStatus newStatus) {
+        if (orderId == null || orderId.isBlank() || newStatus == null) {
+            return Optional.empty();
+        }
+        Optional<Order> updated = findById(orderId).map(o -> {
+            o.setStatus(newStatus);
+            o.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+
+            // Если уход с DRAFT → удалить указатель черновика,
+            // если приход в DRAFT → установить указатель.
+            if (newStatus == OrderStatus.DRAFT) {
+                srt.opsForValue().set(draftKey(o.getChatId()), o.getId());
+            } else {
+                String ptrKey = draftKey(o.getChatId());
+                String curr = srt.opsForValue().get(ptrKey);
+                if (o.getId().equals(curr)) {
+                    srt.delete(ptrKey);
+                }
+            }
+
+            return save(o); // save() обновит Redis + индексы + H2
+        });
+
+        if (updated.isEmpty()) {
+            log.warn("updateStatus: order {} not found", orderId);
+        }
+        return updated;
+    }
 }

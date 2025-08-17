@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
+import com.example.bot.orders.OrderStatus;
 
 import java.util.List;
 
@@ -48,7 +49,7 @@ public class TextInputHandler implements UpdateHandler {
                 s.getService(),
                 s.getSubtype(),
                 text,
-                "NEW",
+                OrderStatus.NEW,            // <-- вот это важно
                 s.getCurrentOrderId()
         );
 
