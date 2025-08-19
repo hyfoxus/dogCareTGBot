@@ -1,39 +1,26 @@
 package com.example.bot.flow;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.redis.core.RedisHash;
-import org.springframework.data.redis.core.TimeToLive;
+import lombok.*;
+import java.io.Serializable;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder(toBuilder = true)
-@RedisHash("session")
-public class ConversationSession {
-    @Id
+@Builder
+public class ConversationSession implements Serializable {
     private Long chatId;
-
-    @Builder.Default
-    private FlowState state = FlowState.IDLE;
-
+    private FlowState state;
     private String service;
     private String subtype;
     private String descriptionDraft;
     private String currentOrderId;
+    /** UNIX-seconds — когда сессия последний раз трогалась */
+    private Long lastActivityTs;
 
-    private long lastActivityTs;
-
-    @TimeToLive
-    @Builder.Default
-    private Long ttlSec = 3600L;
-
-    public static ConversationSession of(Long chatId) {
+    public static ConversationSession of(long chatId) {
         return ConversationSession.builder()
                 .chatId(chatId)
+                .state(FlowState.IDLE)
                 .lastActivityTs(System.currentTimeMillis() / 1000)
                 .build();
     }

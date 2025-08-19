@@ -1,45 +1,32 @@
 package com.example.bot.jpa;
 
 import com.example.bot.orders.Order;
+import com.example.bot.orders.OrderRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.stereotype.Component;
 
-import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 
-@Service
+@Component
 @RequiredArgsConstructor
 public class OrderPersistence {
 
-    private final OrderJpaRepository repo;
+    private final OrderRepository repo;
 
-    /** Сохранить/обновить заказ в H2 из доменной модели (Redis-модели). */
-    @Transactional
-    public void saveFromModel(Order o) {
-        if (o == null || o.getId() == null) return;
-
-        OrderEntity e = OrderEntity.builder()
-                .id(o.getId())
-                .chatId(o.getChatId())
-                .service(o.getService())
-                .subtype(o.getSubtype())
-                .description(o.getDescription())
-                .status(o.getStatus().toString()) // строковый статус
-                .createdAt(toInstantSafe(o.getCreatedAt()))
-                .updatedAt(toInstantSafe(o.getUpdatedAt()))
-                .build();
-
-        repo.save(e);
+    public void saveFromModel(Order m) {
+        repo.save(OrderEntity.fromModel(m));
     }
 
-    /** Удалить запись из H2 (например, при отмене черновика). */
-    @Transactional
-    public void deleteById(String orderId) {
-        if (orderId == null || orderId.isBlank()) return;
-        repo.deleteById(orderId);
+    public void deleteById(String id) {
+        repo.deleteById(id);
     }
 
-    private static Instant toInstantSafe(java.time.OffsetDateTime odt) {
-        return odt != null ? odt.toInstant() : null;
+    public Optional<Order> findById(String id) {
+        return repo.findById(id).map(OrderEntity::toModel);
+    }
+
+    public List<Order> findByChatId(Long chatId) {
+        return repo.findByChatId(chatId).stream().map(OrderEntity::toModel).toList();
     }
 }

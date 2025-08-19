@@ -1,40 +1,57 @@
 package com.example.bot.jpa;
 
+import com.example.bot.orders.OrderStatus;
 import jakarta.persistence.*;
 import lombok.*;
-
-import java.time.Instant;
+import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "orders",
-        indexes = {
-                @Index(name = "idx_orders_chat_created", columnList = "chatId,createdAt"),
-                @Index(name = "idx_orders_status", columnList = "status")
-        })
-@Getter @Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
+@Table(name = "orders")
+@Data @NoArgsConstructor @AllArgsConstructor @Builder
 public class OrderEntity {
 
     @Id
-    @Column(length = 64)
-    private String id;           // тот же String orderId, что и в Redis
+    private String id;
 
     private Long chatId;
 
-    @Column(length = 120)
-    private String service;
+    @Enumerated(EnumType.STRING)
+    private OrderStatus status;
 
-    @Column(length = 120)
+    private String service;
     private String subtype;
 
-    @Column(length = 4000)
+    @Lob
     private String description;
 
-    @Column(length = 40)
-    private String status;       // "DRAFT", "NEW", "IN_PROGRESS", "COMPLETED", "CANCELED" и т.п.
+    private OffsetDateTime createdAt;
+    private OffsetDateTime updatedAt;
 
-    private Instant createdAt;   // храним в UTC
-    private Instant updatedAt;
+    // === mapping helpers ===
+    public static OrderEntity fromModel(com.example.bot.orders.Order m) {
+        if (m == null) return null;
+        return OrderEntity.builder()
+                .id(m.getId())
+                .chatId(m.getChatId())
+                .status(m.getStatus())
+                .service(m.getService())
+                .subtype(m.getSubtype())
+                .description(m.getDescription())
+                .createdAt(m.getCreatedAt())
+                .updatedAt(m.getUpdatedAt())
+                .build();
+    }
+
+    public com.example.bot.orders.Order toModel() {
+        return com.example.bot.orders.Order.builder()
+                .id(id)
+                .chatId(chatId)
+                .status(status)
+                .service(service)
+                .subtype(subtype)
+                .description(description)
+                .createdAt(createdAt)
+                .updatedAt(updatedAt)
+                .build();
+    }
 }

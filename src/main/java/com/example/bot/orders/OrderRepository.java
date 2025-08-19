@@ -1,5 +1,9 @@
 package com.example.bot.orders;
 
-import org.springframework.data.repository.CrudRepository;
+import com.example.bot.jpa.OrderEntity;
+import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.List;
 
-public interface OrderRepository extends CrudRepository<Order, String> { }
+public interface OrderRepository extends JpaRepository<OrderEntity, String> {
+    List<OrderEntity> findByChatId(Long chatId);
+}
