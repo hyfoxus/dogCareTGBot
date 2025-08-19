@@ -1,17 +1,15 @@
 package com.example.bot.orders;
 
 import com.example.bot.jpa.OrderPersistence;
-import com.example.bot.orders.OrderStatus;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -19,28 +17,24 @@ import java.util.stream.Collectors;
 @Slf4j
 public class OrderService {
 
-    // ===== Redis keys/names =====
-    private static final String KEY_PREFIX_ORDER = "order:";                    // order:<id>
-    private static final String KEY_DRAFT_PREFIX = "orders:draft:chat:";        // orders:draft:chat:<chatId>
-    private static final String IDX_ALL = "orders:index:all";                   // ZSET of ids
-    private static final String IDX_BY_CHAT_PREFIX = "orders:index:chat:";      // orders:index:chat:<chatId>
+    /** Основное оперативное хранилище заказов (без Redis). */
+    private final ConcurrentMap<String, Order> store = new ConcurrentHashMap<>();
 
-    private final StringRedisTemplate srt;
-    private final ObjectMapper mapper;              // Spring'овский ObjectMapper
-    private final OrderPersistence orderPersistence; // H2 persistence
+    /** Индекс активного черновика по чату. */
+    private final ConcurrentMap<Long, String> activeDraftByChat = new ConcurrentHashMap<>();
 
-    // ===== Public API =====
+    /** Персист на H2 (как и раньше). */
+    private final OrderPersistence orderPersistence;
 
     /** Возвращает id активного черновика для чата, если есть. */
     public Optional<String> getActiveDraftId(Long chatId) {
-        String id = srt.opsForValue().get(draftKey(chatId));
-        return Optional.ofNullable(id).filter(s -> !s.isBlank());
+        return Optional.ofNullable(activeDraftByChat.get(chatId));
     }
 
     /**
-     * Создаёт или обновляет черновик. Если {@code existingOrderIdOrNull} не задан,
-     * будет создан новый заказ в статусе DRAFT (если {@code statusOrNull} не указан).
-     * Если передан {@code descriptionOrNull} и/или {@code statusOrNull}, они применяются.
+     * Создаёт/обновляет черновик.
+     * Если existingOrderIdOrNull пуст — создаём новый DRAFT.
+     * Если передан description/status — применяем к объекту.
      */
     public Order beginOrUpdateDraft(Long chatId,
                                     String service,
@@ -49,21 +43,21 @@ public class OrderService {
                                     OrderStatus statusOrNull,
                                     String existingOrderIdOrNull) {
 
-        // 1) загрузить существующий или создать новый
+        // 1) загрузить существующий (из in-memory) или создать новый
         Order o = null;
         if (existingOrderIdOrNull != null && !existingOrderIdOrNull.isBlank()) {
-            o = findById(existingOrderIdOrNull).orElse(null);
+            o = store.get(existingOrderIdOrNull);
         }
         if (o == null) {
             o = new Order();
-            o.setId(java.util.UUID.randomUUID().toString());
+            o.setId(UUID.randomUUID().toString());
             o.setChatId(chatId);
-            o.setCreatedAt(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC));
+            o.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
             o.setStatus(statusOrNull != null ? statusOrNull : OrderStatus.DRAFT);
         }
 
         // 2) применить изменения
-        o.setUpdatedAt(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC));
+        o.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         if (service != null) o.setService(service);
         if (subtype != null) o.setSubtype(subtype);
         if (descriptionOrNull != null) o.setDescription(descriptionOrNull);
@@ -72,17 +66,17 @@ public class OrderService {
         // 3) сохранить
         Order saved = save(o);
 
-        // 4) обновить указатель на черновик для чата (если статус DRAFT)
+        // 4) обновить указатель на черновик
         if (saved.getStatus() == OrderStatus.DRAFT) {
-            srt.opsForValue().set(draftKey(chatId), saved.getId());
+            activeDraftByChat.put(chatId, saved.getId());
         } else {
             // финализирован — черновик больше не актуален
-            srt.delete(draftKey(chatId));
+            activeDraftByChat.compute(chatId, (k, v) -> (saved.getId().equals(v) ? null : v));
         }
         return saved;
     }
 
-    /** Универсальное сохранение заказа: Redis (+индексы) + H2. */
+    /** Универсальное сохранение заказа: in-memory + H2. */
     public Order save(Order o) {
         if (o.getId() == null || o.getId().isBlank()) {
             o.setId(UUID.randomUUID().toString());
@@ -94,15 +88,13 @@ public class OrderService {
             o.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         }
 
-        // Redis: сам объект
-        String json = toJson(o);
-        srt.opsForValue().set(orderKey(o.getId()), json);
-
-        // Redis: индексы (по времени создания)
-        touchIndexes(o);
-
-        // H2: персистенция
-        orderPersistence.saveFromModel(o);
+        store.put(o.getId(), o);
+        // write-through в H2
+        try {
+            orderPersistence.saveFromModel(o);
+        } catch (Exception ex) {
+            log.warn("H2 persistence failed for order {}", o.getId(), ex);
+        }
 
         if (log.isDebugEnabled()) {
             log.debug("Saved order {} status={} chat={}", o.getId(), o.getStatus(), o.getChatId());
@@ -110,152 +102,97 @@ public class OrderService {
         return o;
     }
 
-    /** Получить заказ по id из Redis. */
+    /** Получить заказ по id из in-memory. */
     public Optional<Order> findById(String orderId) {
         if (orderId == null || orderId.isBlank()) return Optional.empty();
-        String json = srt.opsForValue().get(orderKey(orderId));
-        if (json == null) return Optional.empty();
-        return Optional.ofNullable(fromJson(json));
+        return Optional.ofNullable(store.get(orderId));
     }
 
     /** Последние N заказов (по дате создания), глобально. */
     public List<Order> latest(int limit) {
         int n = Math.max(1, Math.min(200, limit));
-        Set<String> ids = srt.opsForZSet().reverseRange(IDX_ALL, 0, n - 1);
-        if (ids == null || ids.isEmpty()) return List.of();
-        return ids.stream()
-                .map(this::findById)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .sorted(Comparator.comparing(Order::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())).reversed())
+        return store.values().stream()
+                .sorted(Comparator.comparing(Order::getCreatedAt,
+                        Comparator.nullsLast(Comparator.naturalOrder())).reversed())
+                .limit(n)
                 .collect(Collectors.toList());
     }
 
     /** Последние N заказов по конкретному чату. */
     public List<Order> latestByChat(Long chatId, int limit) {
         int n = Math.max(1, Math.min(200, limit));
-        Set<String> ids = srt.opsForZSet().reverseRange(chatIndexKey(chatId), 0, n - 1);
-        if (ids == null || ids.isEmpty()) return List.of();
-        return ids.stream()
-                .map(this::findById)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .sorted(Comparator.comparing(Order::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())).reversed())
+        return store.values().stream()
+                .filter(o -> Objects.equals(o.getChatId(), chatId))
+                .sorted(Comparator.comparing(Order::getCreatedAt,
+                        Comparator.nullsLast(Comparator.naturalOrder())).reversed())
+                .limit(n)
                 .collect(Collectors.toList());
     }
 
     /**
      * Отмена черновика по его orderId.
-     * Удаляет объект, чистит указатель черновика и индексы.
-     * Удаляет запись и из H2.
+     * Удаляет объект из in-memory, чистит указатель черновика и удаляет запись из H2.
      */
     public void cancelDraft(String orderId) {
         if (orderId == null || orderId.isBlank()) return;
 
-        findById(orderId).ifPresent(o -> {
-            // удалить сам заказ в Redis
-            srt.delete(orderKey(orderId));
+        Order removed = store.remove(orderId);
+        if (removed == null) return;
 
-            // убрать указатель на черновик для этого чата, если он на нас указывает
-            String draftPtrKey = draftKey(o.getChatId());
-            String currentPtr = srt.opsForValue().get(draftPtrKey);
-            if (orderId.equals(currentPtr)) {
-                srt.delete(draftPtrKey);
-            }
+        // убрать указатель на черновик, если он на нас указывает
+        activeDraftByChat.compute(removed.getChatId(), (k, v) -> (orderId.equals(v) ? null : v));
 
-            // убрать из индексов
-            removeFromIndexes(o);
-
-            // H2: удалить запись
+        // удалить из H2
+        try {
             orderPersistence.deleteById(orderId);
+        } catch (Exception ex) {
+            log.warn("H2 delete failed for order {}", orderId, ex);
+        }
 
-            if (log.isDebugEnabled()) {
-                log.debug("Draft canceled and deleted: {} (chat={})", orderId, o.getChatId());
-            }
-        });
+        if (log.isDebugEnabled()) {
+            log.debug("Draft canceled and deleted: {} (chat={})", orderId, removed.getChatId());
+        }
     }
 
     /** Обратная совместимость: отменить черновик по chatId. */
     public void cancelDraft(Long chatId) {
-        getActiveDraftId(chatId).ifPresent(this::cancelDraft);
+        String draftId = activeDraftByChat.get(chatId);
+        if (draftId != null) {
+            cancelDraft(draftId);
+        }
         if (log.isDebugEnabled()) {
             log.debug("Cancel draft requested for chat={}", chatId);
         }
     }
 
-    // ===== Private helpers =====
-
-    private void touchIndexes(Order o) {
-        double score = score(o.getCreatedAt());
-        srt.opsForZSet().add(IDX_ALL, o.getId(), score);
-        srt.opsForZSet().add(chatIndexKey(o.getChatId()), o.getId(), score);
-    }
-
-    private void removeFromIndexes(Order o) {
-        srt.opsForZSet().remove(IDX_ALL, o.getId());
-        srt.opsForZSet().remove(chatIndexKey(o.getChatId()), o.getId());
-    }
-
-    private static double score(OffsetDateTime odt) {
-        // секунды epoch; для стабильности сортировки можно добавить небольшую фракцию из nanos
-        long secs = (odt != null ? odt.toEpochSecond() : OffsetDateTime.now(ZoneOffset.UTC).toEpochSecond());
-        return (double) secs;
-    }
-
-    private static String orderKey(String id) {
-        return KEY_PREFIX_ORDER + id;
-    }
-
-    private static String draftKey(Long chatId) {
-        return KEY_DRAFT_PREFIX + chatId;
-    }
-
-    private static String chatIndexKey(Long chatId) {
-        return IDX_BY_CHAT_PREFIX + chatId;
-    }
-
-    private String toJson(Order o) {
-        try {
-            return mapper.writeValueAsString(o);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize order " + o.getId(), e);
-        }
-    }
-
-    private Order fromJson(String json) {
-        try {
-            return mapper.readValue(json, Order.class);
-        } catch (Exception e) {
-            log.warn("Failed to deserialize order JSON: {}", json, e);
-            return null;
-        }
-    }
+    /** Обновление статуса с корректной работой указателя черновика. */
     public Optional<Order> updateStatus(String orderId, OrderStatus newStatus) {
         if (orderId == null || orderId.isBlank() || newStatus == null) {
             return Optional.empty();
         }
-        Optional<Order> updated = findById(orderId).map(o -> {
+        Order updated = store.computeIfPresent(orderId, (id, o) -> {
             o.setStatus(newStatus);
             o.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
 
-            // Если уход с DRAFT → удалить указатель черновика,
-            // если приход в DRAFT → установить указатель.
             if (newStatus == OrderStatus.DRAFT) {
-                srt.opsForValue().set(draftKey(o.getChatId()), o.getId());
+                activeDraftByChat.put(o.getChatId(), o.getId());
             } else {
-                String ptrKey = draftKey(o.getChatId());
-                String curr = srt.opsForValue().get(ptrKey);
-                if (o.getId().equals(curr)) {
-                    srt.delete(ptrKey);
-                }
+                activeDraftByChat.compute(o.getChatId(), (k, v) -> (o.getId().equals(v) ? null : v));
             }
-
-            return save(o); // save() обновит Redis + индексы + H2
+            return o;
         });
 
-        if (updated.isEmpty()) {
+        if (updated == null) {
             log.warn("updateStatus: order {} not found", orderId);
+            return Optional.empty();
         }
-        return updated;
+
+        // персист в H2
+        try {
+            orderPersistence.saveFromModel(updated);
+        } catch (Exception ex) {
+            log.warn("H2 persistence failed on updateStatus for order {}", orderId, ex);
+        }
+        return Optional.of(updated);
     }
 }
