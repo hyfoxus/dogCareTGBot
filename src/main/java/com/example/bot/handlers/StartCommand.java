@@ -1,5 +1,6 @@
 package com.example.bot.handlers;
 
+import com.example.bot.config.HandlerOrderProperties;
 import com.example.bot.config.UiProperties;
 import com.example.bot.core.UpdateHandler;
 import com.example.bot.util.Reply;
@@ -13,18 +14,22 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import static java.util.List.of;
 
 @Component
-@org.springframework.core.annotation.Order(10)
 @RequiredArgsConstructor
 public class StartCommand implements UpdateHandler {
 
     private final TelegramClient client;
     private final UiProperties ui;
+    private final HandlerOrderProperties orderProps;
 
     @Override
     public boolean supports(Update u) {
-        return u.hasMessage()
-                && u.getMessage().hasText()
-                && "/start".equalsIgnoreCase(u.getMessage().getText().trim());
+        return u.hasMessage() && u.getMessage().hasText()
+                && u.getMessage().getText().trim().startsWith("/start");
+    }
+
+    @Override
+    public int order() {
+        return orderProps.orderOf("start", 10);
     }
 
     @Override
